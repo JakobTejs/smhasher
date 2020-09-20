@@ -1,6 +1,8 @@
 // Based on Thorup's "high speed hashing for integers and strings"
 // https://arxiv.org/pdf/1504.06804.pdf
 
+#include <x86intrin.h>
+
 #ifndef tabulation_included
 #define tabulation_included
 
@@ -96,33 +98,88 @@ static void tabulation_32_seed_init(size_t seed) {
 
 #ifdef __SIZEOF_INT128__
 
+const static __m128i P64 = _mm_set_epi64x(0, (uint64_t)1 + ((uint64_t)1<<1) + ((uint64_t)1<<3) + ((uint64_t)1<<4));
 const static uint64_t TAB_MERSENNE_61 = (1ull << 61) - 1;
 // multiply shift works on fixed length strings, so we operate in blocks.
 // this size can be tuned depending on the system.
 const static int TAB_BLOCK_SIZE = 1<<8;
+// We use multiply shift until a threshold
+const static int THRESHOLD = 128;
+
 
 static __uint128_t tab_multiply_shift_random[TAB_BLOCK_SIZE];
+static uint64_t tab_multiply_xor_random[TAB_BLOCK_SIZE];
+static __m128i     tab_carryless_random[TAB_BLOCK_SIZE];
+static __m128i     tab_pair_carryless_random[TAB_BLOCK_SIZE/2];
 static __uint128_t tab_multiply_shift_a;
 static __uint128_t tab_multiply_shift_b;
+static __uint128_t tab_multiply_shift_xor;
 
 static int64_t tabulation[64/CHAR_SIZE][1<<CHAR_SIZE];
 
-static uint64_t combine61(uint64_t h, uint64_t x, uint64_t a) {
+inline uint64_t combine61(uint64_t h, uint64_t x, uint64_t a) {
    // we assume 2^b-1 >= 2u-1. in other words
    // x <= u-1 <= 2^(b-1)-1 (at most 60 bits)
    // a <= p-1  = 2^b-2     (60 bits suffices)
-      // actually, checking the proof, it's fine if a is 61 bits.
+   // actually, checking the proof, it's fine if a is 61 bits.
    // h <= 2p-1 = 2^62-3. this will also be guaranteed of the output.
    __uint128_t temp = (__uint128_t)h * x + a;
    return ((uint64_t)temp & TAB_MERSENNE_61) + (uint64_t)(temp >> 61);
 }
 
 
-static uint64_t finalize_tabulation(uint64_t h) {
+inline uint64_t finalize_tabulation(uint64_t h) {
    uint64_t tab = 0;
    for (int i = 0; i < 64/CHAR_SIZE; i++, h >>= CHAR_SIZE)
-      tab ^= tabulation[i][h % (1<<CHAR_SIZE)];
+      tab ^= tabulation[i][h & ((1<<CHAR_SIZE) - 1)];
    return tab;
+}
+
+inline uint64_t tab_inner_multiply_shift(const uint8_t*& buf, int len) {
+   uint64_t block_hash = 0;
+   for (int i = 0; i < TAB_BLOCK_SIZE; i++, buf += 8) {
+      block_hash ^= (tab_multiply_shift_random[i] * take64(buf)) >> 64;
+   }
+   return block_hash;
+}
+
+inline uint64_t tab_inner_carryless(const uint8_t*& buf, int len) {
+   __m128i cl_block_hash = _mm_set_epi64x(0, 0);
+   for (int i = 0; i < TAB_BLOCK_SIZE; i++, buf += 8) {
+      cl_block_hash = _mm_xor_si128(cl_block_hash, _mm_clmulepi64_si128(tab_carryless_random[i], _mm_set_epi64x(0, take64(buf)), 0x00));
+   }
+   __m128i q1 = _mm_clmulepi64_si128(cl_block_hash, P64, 0x01); // Take the high bits for the first and low bits for the second
+   __m128i q2 = _mm_clmulepi64_si128(q2, P64, 0x01); // Take the high bits for the first and low bits for the second
+
+   return _mm_cvtsi128_si64(_mm_xor_si128(cl_block_hash, _mm_xor_si128(q1, q2)));
+}
+
+inline uint64_t tab_inner_pair_carryless(const uint8_t*& buf, int len) {
+   __m128i cl_block_hash = _mm_set_epi64x(0, 0);
+   for (int i = 0; i < TAB_BLOCK_SIZE/2; i++, buf += 16) {
+      __m128i tmp = _mm_xor_si128(tab_pair_carryless_random[i], _mm_set_epi64x(take64(buf), take64(buf))); 
+      cl_block_hash = _mm_xor_si128(cl_block_hash, _mm_clmulepi64_si128(tmp, tmp, 0x10)); // Take the high bits for the first and low bits for the second
+   }
+   __m128i q1 = _mm_clmulepi64_si128(cl_block_hash, P64, 0x01); // Take the high bits for the first and low bits for the second
+   __m128i q2 = _mm_clmulepi64_si128(q2, P64, 0x01); // Take the high bits for the first and low bits for the second
+
+   return _mm_cvtsi128_si64(_mm_xor_si128(cl_block_hash, _mm_xor_si128(q1, q2)));
+}
+
+inline uint64_t tab_inner_multiply_xor(const uint8_t*& buf, int len) {
+   __uint128_t block_hash = 0;
+   for (int i = 0; i < TAB_BLOCK_SIZE; i++, buf += 8) {
+      block_hash ^= (__uint128_t)tab_multiply_xor_random[i] * take64(buf);
+   }
+   return (block_hash * tab_multiply_shift_xor) >> 64;
+}
+
+inline uint64_t tab_inner_pair_multiply_xor(const uint8_t*& buf, int len) {
+   __uint128_t block_hash = 0;
+   for (int i = 0; i < TAB_BLOCK_SIZE; i+=2, buf += 16) {
+      block_hash ^= (__uint128_t)(tab_multiply_xor_random[i] ^ take64(buf))*(tab_multiply_xor_random[i^1] ^ take64(buf));
+   }
+   return (block_hash * tab_multiply_shift_xor) >> 64;
 }
 
 
@@ -154,17 +211,8 @@ static uint64_t tabulation_hash(const void * key, int len_bytes, uint32_t seed) 
          // and since the xor of independent strongly-universal hash functions
          // is also universal, we get a unique value for each block.
          for (int b = 0; b < len_blocks; b++) {
-            uint64_t block_hash = 0;
-            for (int i = 0; i < TAB_BLOCK_SIZE; i++, buf += 8) {
-               // we don't have to shift yet, but shifting by 64 allows the
-               // compiler to produce a single "high bits only" multiplication instruction.
-               block_hash ^= (tab_multiply_shift_random[i] * take64(buf)) >> 64;
-
-               // the following is very fast, basically using mum, but theoretically wrong.
-               // __uint128_t mum = (__uint128_t)tab_multiply_shift_random_64[i] * take64(buf);
-               // block_hash ^= mum ^ (mum >> 64);
-            }
-
+            uint64_t block_hash = tab_inner_carryless(buf, TAB_BLOCK_SIZE);
+            
             // finally we combine the block hash using variable length hashing.
             // values have to be less than mersenne for the combination to work.
             // we can shift down, since any shift of multiply-shift outputs is
@@ -179,8 +227,13 @@ static uint64_t tabulation_hash(const void * key, int len_bytes, uint32_t seed) 
 
       // then read the remaining words
       const int remaining_words = len_words % TAB_BLOCK_SIZE;
-      for (int i = 0; i < remaining_words; i++, buf += 8)
-         h ^= tab_multiply_shift_random[i] * take64(buf) >> 64;
+      // if (remaining_words >= THRESHOLD) {
+      //    h ^= pair_carryless(buf, remaining_words);
+      // } else {
+         for (int i = 0; i < remaining_words; i++, buf += 8) {
+            h ^= tab_multiply_shift_random[i] * take64(buf) >> 64;
+         }
+      // }
    }
 
    // now get the remaining bytes
@@ -205,8 +258,15 @@ static void tabulation_seed_init(size_t seed) {
    // the lazy mersenne combination requires 60 bits values in the polynomial.
    tab_multiply_shift_a = tab_rand128() & ((1ull<<60)-1);
    tab_multiply_shift_b = tab_rand128();
-   for (int i = 0; i < TAB_BLOCK_SIZE; i++)
+   tab_multiply_shift_xor = tab_rand128() | 1;
+   for (int i = 0; i < TAB_BLOCK_SIZE; i++) {
       tab_multiply_shift_random[i] = tab_rand128();
+      tab_multiply_xor_random[i]   = tab_rand64();
+      tab_carryless_random[i]      = _mm_set_epi64x(0, tab_rand64());
+      if((i&1) == 0) {
+         tab_pair_carryless_random[i/2] = _mm_set_epi64x(tab_rand64(), tab_rand64());
+      }
+   }
    for (int i = 0; i < 64/CHAR_SIZE; i++)
       for (int j = 0; j < 1<<CHAR_SIZE; j++)
          tabulation[i][j] = tab_rand128();
