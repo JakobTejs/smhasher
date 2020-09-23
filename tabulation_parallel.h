@@ -58,25 +58,29 @@ static uint64_t tab_parallel_one_block(const uint64_t* random, const uint8_t* da
    const  __m256i* const _random = (const __m256i *)random;
 
    // We eat 256 bits (4 words) for each iteration
-   for (size_t i = 0; i < TAB_PARALLEL_BLOCK_SIZE/4; ++i) {
-      __m256i const x = _mm256_loadu_si256(input + i);
-      __m256i const a = _mm256_loadu_si256(_random + i);
+   for (size_t i = 0; i < TAB_PARALLEL_BLOCK_SIZE/4;) {
+      __builtin_prefetch((data + 32*i + 384), 0 , 3 );
 
-      // Vector add x+a mod 2^32.
-      // In contrast to mul, there is no epu version.
-      __m256i const tmp  = _mm256_add_epi32(x, a);
+      for (size_t j = 0; j < 2; ++j, ++i) {
+         __m256i const x = _mm256_loadu_si256(input + i);
+         __m256i const a = _mm256_loadu_si256(_random + i);
 
-      // Align high values into low values, to prepare for pair multiplication
-      __m256i const tmp2 =  _mm256_shuffle_epi32(tmp, _MM_SHUFFLE(0, 3, 0, 1));
+         // Vector add x+a mod 2^32.
+         // In contrast to mul, there is no epu version.
+         __m256i const tmp  = _mm256_add_epi32(x, a);
 
-      // Multiplies the value of packed unsigned doubleword integer
-      // in source vector s1 by the value in source vector s2 and stores
-      // the result in the destination vector.
-      // When a quadword result is too large to be represented in 64 bits
-      // (overflow), the result is wrapped around and the low 64 bits are
-      // written to the destination element (that is, the carry is ignored).
-      __m256i const product =  _mm256_mul_epu32(tmp, tmp2);
-      acc = _mm256_add_epi64(acc, product);
+         // Align high values into low values, to prepare for pair multiplication
+         __m256i const tmp2 =  _mm256_srli_epi64(tmp, 32); //shuffle_epi32(tmp, _MM_SHUFFLE(0, 3, 0, 1));
+
+         // Multiplies the value of packed unsigned doubleword integer
+         // in source vector s1 by the value in source vector s2 and stores
+         // the result in the destination vector.
+         // When a quadword result is too large to be represented in 64 bits
+         // (overflow), the result is wrapped around and the low 64 bits are
+         // written to the destination element (that is, the carry is ignored).
+         __m256i const product =  _mm256_mul_epu32(tmp, tmp2);
+         acc = _mm256_add_epi64(acc, product);
+      }
    }
    uint64_t x[4];
    memcpy(&x, &acc, sizeof(x));
@@ -218,8 +222,8 @@ static uint64_t tab_parallel_hash(const void* key, int len_bytes, uint32_t seed)
       int len_words = len_bytes / 8;
 
       while (len_words >= TAB_PARALLEL_BLOCK_SIZE) {
-         //uint64_t block_hash = tab_parallel_one_block(tab_parallel_random, data);
-         uint64_t block_hash = tab_carryless_one_block(tab_parallel_random, data);
+         uint64_t block_hash = tab_parallel_one_block(tab_parallel_random, data);
+        //  uint64_t block_hash = tab_carryless_one_block(tab_parallel_random, data);
          //uint64_t block_hash = tab_parallel_stripe_block(tab_parallel_random, data);
          //uint64_t block_hash = tab_parallel_double_block(tab_parallel_random, tab_parallel_random_2, data);
          val = tab_parallel_combine(val, block_hash >> 4, tab_parallel_a);
