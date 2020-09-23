@@ -51,7 +51,7 @@ static uint64_t tab_parallel_combine(uint64_t acc, uint64_t block_hash, uint64_t
 
 
 //# if defined(__AVX2__)
-static uint64_t tab_parallel_one_block(const uint64_t* random, const uint8_t*& data) {
+static uint64_t tab_parallel_one_block(const uint64_t* random, const uint8_t* data) {
    __m256i acc = _mm256_set_epi64x(0, 0, 0, 0);
 
    const  __m256i* const input  = (const __m256i *)data;
@@ -84,7 +84,7 @@ static uint64_t tab_parallel_one_block(const uint64_t* random, const uint8_t*& d
    return (tab_parallel_d*(x[0] + x[1] + x[2] + x[3])) >> 64;
 }
 
-static uint64_t tab_parallel_stripe_block(const uint64_t* random, const uint8_t*& data) {
+static uint64_t tab_parallel_stripe_block(const uint64_t* random, const uint8_t* data) {
    __m256i acc1 = _mm256_set_epi64x(0, 0, 0, 0);
    __m256i acc2 = _mm256_set_epi64x(0, 0, 0, 0);
 
@@ -115,10 +115,31 @@ static uint64_t tab_parallel_stripe_block(const uint64_t* random, const uint8_t*
    return (tab_parallel_d*(x[0] + x[1] + x[2] + x[3])) >> 64;
 }
 
+static const __m128i tab_carryless_P64 = _mm_set_epi64x(0, (uint64_t)1 + ((uint64_t)1<<1) + ((uint64_t)1<<3) + ((uint64_t)1<<4));
+static uint64_t tab_carryless_one_block(const uint64_t* random, const uint8_t* data) {
+   __m128i acc = _mm_set_epi64x(0, 0);
+
+   const  __m128i* const input  = (const __m128i *) data;
+   const  __m128i* const _random = (const __m128i *)random;
+
+   for (size_t i = 0; i < TAB_PARALLEL_BLOCK_SIZE/2; ++i) {
+      __m128i x = _mm_loadu_si128(input + i);
+      __m128i k = _mm_loadu_si128(_random + i);
+      __m128i tmp = x ^ k;
+      acc ^=  _mm_clmulepi64_si128(tmp, tmp, 0x10);
+   }
+   // Take the high bits for the first and low bits for the second
+   __m128i q1 = _mm_clmulepi64_si128(acc, tab_carryless_P64, 0x01);
+   // Take the high bits for the first and low bits for the second
+   __m128i q2 = _mm_clmulepi64_si128(q2, tab_carryless_P64, 0x01);
+   return _mm_cvtsi128_si64(acc ^ q1 ^ q2);
+}
+
+// This gives 64 bit security
 static uint64_t tab_parallel_double_block(
       const uint64_t* random1,
       const uint64_t* random2,
-      const uint8_t*& data) {
+      const uint8_t* data) {
    __m256i acc = _mm256_set_epi64x(0, 0, 0, 0);
 
    const  __m256i* const input  = (const __m256i *)data;
@@ -167,22 +188,22 @@ static uint64_t tab_parallel_finalize_tabulation_32(uint32_t h) {
 }
 
 static uint64_t tab_parallel_finalize_murmur(uint64_t h) {
-    h ^= h >> 33;
-    h *= 0xff51afd7ed558ccdULL;
-    h ^= h >> 33;
-    h *= 0xc4ceb9fe1a85ec53ULL;
-    h ^= h >> 33;
-    return h;
+   h ^= h >> 33;
+   h *= 0xff51afd7ed558ccdULL;
+   h ^= h >> 33;
+   h *= 0xc4ceb9fe1a85ec53ULL;
+   h ^= h >> 33;
+   return h;
 }
 
 static uint64_t tab_parallel_finalize_poly(uint64_t h, int k) {
-    uint64_t h0 = h >> 4;
-    h = tab_parallel_random[0] % TAB_MERSENNE_61;
-    for (int i = 1; i <= k; i++)
-       h = tab_parallel_combine(h, h0, tab_parallel_random[i] % TAB_MERSENNE_61);
-    if (h >= TAB_MERSENNE_61)
-       h -= TAB_MERSENNE_61;
-    return h;
+   uint64_t h0 = h >> 4;
+   h = tab_parallel_random[0] % TAB_MERSENNE_61;
+   for (int i = 1; i <= k; i++)
+      h = tab_parallel_combine(h, h0, tab_parallel_random[i] % TAB_MERSENNE_61);
+   if (h >= TAB_MERSENNE_61)
+      h -= TAB_MERSENNE_61;
+   return h;
 }
 
 static uint64_t tab_parallel_hash(const void* key, int len_bytes, uint32_t seed) {
@@ -197,8 +218,10 @@ static uint64_t tab_parallel_hash(const void* key, int len_bytes, uint32_t seed)
       int len_words = len_bytes / 8;
 
       while (len_words >= TAB_PARALLEL_BLOCK_SIZE) {
-         uint64_t block_hash = tab_parallel_one_block(tab_parallel_random, data);
+         //uint64_t block_hash = tab_parallel_one_block(tab_parallel_random, data);
+         uint64_t block_hash = tab_carryless_one_block(tab_parallel_random, data);
          //uint64_t block_hash = tab_parallel_stripe_block(tab_parallel_random, data);
+         //uint64_t block_hash = tab_parallel_double_block(tab_parallel_random, tab_parallel_random_2, data);
          val = tab_parallel_combine(val, block_hash >> 4, tab_parallel_a);
 
          // We eat TAB_PARALLEL_BLOCK_SIZE 8byte words.
@@ -230,10 +253,9 @@ static uint64_t tab_parallel_hash(const void* key, int len_bytes, uint32_t seed)
    }
 
 
-   //return tab_parallel_finalize_murmur(val);
-   return tab_parallel_finalize_tabulation(val);
-   //val = (val >> 32) ^ (seed << 8) ^ len_bytes; // Re add len onto the upper bits
-   //return tab_parallel_finalize_tabulation_32(val);
+   return tab_parallel_finalize_murmur(val);
+   //return tab_parallel_finalize_tabulation(val);
+   //return tab_parallel_finalize_tabulation_32((val >> 32) ^ (seed << 8) ^ len_bytes);
    //return tab_parallel_finalize_poly(val, 3);
 }
 

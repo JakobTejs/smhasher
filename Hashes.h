@@ -503,15 +503,6 @@ inline void tabulation_32_test (const void * key, int len, uint32_t seed, void *
 }
 
 #ifdef __SIZEOF_INT128__
-  #include "tabulation_carryless.h"
-  inline void tab_carryless_init() {
-    tab_carryless_seed_init(2);
-  }
-
-  inline void tab_carryless_test (const void * key, int len, uint32_t seed, void* out) {
-    *(uint64_t*)out = tab_carryless_hash(key, len, seed);
-  }
-
   #include "tabulation_parallel.h"
   inline void tab_parallel_init() {
     tab_parallel_seed_init(2);
