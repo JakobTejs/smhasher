@@ -31,10 +31,10 @@ static uint32_t combine31(uint32_t h, uint32_t x, uint32_t a) {
 }
 
 static uint32_t finalize_tabulation_32(uint32_t h) {
-   uint32_t tab = 0;
+   uint32_t original_tab = 0;
    for (int i = 0; i < 32/CHAR_SIZE; i++, h >>= CHAR_SIZE)
-      tab ^= tabulation_32[i][h & ((1<<CHAR_SIZE)-1)];
-   return tab;
+      original_tab ^= tabulation_32[i][h & ((1<<CHAR_SIZE)-1)];
+   return original_tab;
 }
 
 static uint32_t tabulation_32_hash(const void * key, int len_bytes, uint32_t seed) {
@@ -67,7 +67,7 @@ static uint32_t tabulation_32_hash(const void * key, int len_bytes, uint32_t see
 }
 
 
-static uint64_t tab_rand64() {
+static uint64_t original_tab_rand64() {
    // we don't know how many bits we get from rand(),
    // but it is at least 16, so we concattenate a couple.
    uint64_t r = 0;
@@ -81,13 +81,13 @@ static uint64_t tab_rand64() {
 static void tabulation_32_seed_init(size_t seed) {
    srand(seed);
    // the lazy mersenne combination requires 30 bits values in the polynomial.
-   multiply_shift_a_64 = tab_rand64() & ((1ull<<30)-1);
-   multiply_shift_b_64 = tab_rand64();
+   multiply_shift_a_64 = original_tab_rand64() & ((1ull<<30)-1);
+   multiply_shift_b_64 = original_tab_rand64();
    for (int i = 0; i < BLOCK_SIZE_32; i++)
-      multiply_shift_random_64[i] = tab_rand64();
+      multiply_shift_random_64[i] = original_tab_rand64();
    for (int i = 0; i < 32/CHAR_SIZE; i++)
       for (int j = 0; j < 1<<CHAR_SIZE; j++)
-         tabulation_32[i][j] = tab_rand64();
+         tabulation_32[i][j] = original_tab_rand64();
 }
 
 
@@ -107,13 +107,14 @@ const static int TAB_BLOCK_SIZE = 1<<8;
 const static int THRESHOLD = 128;
 
 
-static __uint128_t tab_multiply_shift_random[TAB_BLOCK_SIZE];
-static uint64_t tab_multiply_xor_random[TAB_BLOCK_SIZE];
-static __m128i     tab_carryless_random[TAB_BLOCK_SIZE];
-static __m128i     tab_pair_carryless_random[TAB_BLOCK_SIZE/2];
-static __uint128_t tab_multiply_shift_a;
-static __uint128_t tab_multiply_shift_b;
-static __uint128_t tab_multiply_shift_xor;
+static __uint128_t original_tab_multiply_shift_random[TAB_BLOCK_SIZE];
+static uint64_t    original_tab_multiply_xor_random[TAB_BLOCK_SIZE];
+static __m128i     original_tab_carryless_random[TAB_BLOCK_SIZE];
+static __m128i     original_tab_pair_carryless_random[TAB_BLOCK_SIZE/2];
+static __uint128_t original_tab_multiply_shift_a;
+static __uint128_t original_tab_multiply_shift_b;
+static __uint128_t original_tab_multiply_shift_c;
+static __uint128_t original_tab_multiply_shift_xor;
 
 static int64_t tabulation[64/CHAR_SIZE][1<<CHAR_SIZE];
 
@@ -129,24 +130,24 @@ inline uint64_t combine61(uint64_t h, uint64_t x, uint64_t a) {
 
 
 inline uint64_t finalize_tabulation(uint64_t h) {
-   uint64_t tab = 0;
+   uint64_t original_tab = 0;
    for (int i = 0; i < 64/CHAR_SIZE; i++, h >>= CHAR_SIZE)
-      tab ^= tabulation[i][h & ((1<<CHAR_SIZE) - 1)];
-   return tab;
+      original_tab ^= tabulation[i][h & ((1<<CHAR_SIZE) - 1)];
+   return original_tab;
 }
 
-inline uint64_t tab_inner_multiply_shift(const uint8_t*& buf, int len) {
+inline uint64_t original_tab_inner_multiply_shift(const uint64_t*& buf, int len) {
    uint64_t block_hash = 0;
-   for (int i = 0; i < TAB_BLOCK_SIZE; i++, buf += 8) {
-      block_hash ^= (tab_multiply_shift_random[i] * take64(buf)) >> 64;
+   for (int i = 0; i < TAB_BLOCK_SIZE; i++, buf += 1) {
+      block_hash ^= (original_tab_multiply_shift_random[i] * (*buf)) >> 64;
    }
    return block_hash;
 }
 
-inline uint64_t tab_inner_carryless(const uint8_t*& buf, int len) {
+inline uint64_t original_tab_inner_carryless(const uint64_t*& buf, int len) {
    __m128i cl_block_hash = _mm_set_epi64x(0, 0);
-   for (int i = 0; i < TAB_BLOCK_SIZE; i++, buf += 8) {
-      cl_block_hash = _mm_xor_si128(cl_block_hash, _mm_clmulepi64_si128(tab_carryless_random[i], _mm_set_epi64x(0, take64(buf)), 0x00));
+   for (int i = 0; i < TAB_BLOCK_SIZE; i++, buf += 1) {
+      cl_block_hash = _mm_xor_si128(cl_block_hash, _mm_clmulepi64_si128(original_tab_carryless_random[i], _mm_set_epi64x(0, *buf), 0x00));
    }
    __m128i q1 = _mm_clmulepi64_si128(cl_block_hash, P64, 0x01); // Take the high bits for the first and low bits for the second
    __m128i q2 = _mm_clmulepi64_si128(q2, P64, 0x01); // Take the high bits for the first and low bits for the second
@@ -154,10 +155,10 @@ inline uint64_t tab_inner_carryless(const uint8_t*& buf, int len) {
    return _mm_cvtsi128_si64(_mm_xor_si128(cl_block_hash, _mm_xor_si128(q1, q2)));
 }
 
-inline uint64_t tab_inner_pair_carryless(const uint8_t*& buf, int len) {
+inline uint64_t original_tab_inner_pair_carryless(const uint8_t*& buf, int len) {
    __m128i cl_block_hash = _mm_set_epi64x(0, 0);
    for (int i = 0; i < TAB_BLOCK_SIZE/2; i++, buf += 16) {
-      __m128i tmp = _mm_xor_si128(tab_pair_carryless_random[i], _mm_set_epi64x(take64(buf), take64(buf))); 
+      __m128i tmp = _mm_xor_si128(original_tab_pair_carryless_random[i], _mm_set_epi64x(take64(buf), take64(buf+8))); 
       cl_block_hash = _mm_xor_si128(cl_block_hash, _mm_clmulepi64_si128(tmp, tmp, 0x10)); // Take the high bits for the first and low bits for the second
    }
    __m128i q1 = _mm_clmulepi64_si128(cl_block_hash, P64, 0x01); // Take the high bits for the first and low bits for the second
@@ -166,20 +167,23 @@ inline uint64_t tab_inner_pair_carryless(const uint8_t*& buf, int len) {
    return _mm_cvtsi128_si64(_mm_xor_si128(cl_block_hash, _mm_xor_si128(q1, q2)));
 }
 
-inline uint64_t tab_inner_multiply_xor(const uint8_t*& buf, int len) {
+inline uint64_t original_tab_inner_multiply_xor(const uint64_t*& buf, int len) {
    __uint128_t block_hash = 0;
-   for (int i = 0; i < TAB_BLOCK_SIZE; i++, buf += 8) {
-      block_hash ^= (__uint128_t)tab_multiply_xor_random[i] * take64(buf);
+   for (int i = 0; i < TAB_BLOCK_SIZE; i+=4, buf += 4) {
+      block_hash ^= (__uint128_t)original_tab_multiply_xor_random[i] * (*buf);
+      block_hash ^= (__uint128_t)original_tab_multiply_xor_random[i+1] * (*buf+1);
+      block_hash ^= (__uint128_t)original_tab_multiply_xor_random[i+2] * (*buf+2);
+      block_hash ^= (__uint128_t)original_tab_multiply_xor_random[i+3] * (*buf+3);
    }
-   return (block_hash * tab_multiply_shift_xor) >> 64;
+   return (block_hash * original_tab_multiply_shift_xor) >> 64;
 }
 
-inline uint64_t tab_inner_pair_multiply_xor(const uint8_t*& buf, int len) {
+inline uint64_t original_tab_inner_pair_multiply_xor(const uint8_t*& buf, int len) {
    __uint128_t block_hash = 0;
    for (int i = 0; i < TAB_BLOCK_SIZE; i+=2, buf += 16) {
-      block_hash ^= (__uint128_t)(tab_multiply_xor_random[i] ^ take64(buf))*(tab_multiply_xor_random[i^1] ^ take64(buf));
+      block_hash ^= (__uint128_t)(original_tab_multiply_xor_random[i] ^ take64(buf))*(original_tab_multiply_xor_random[i^1] ^ take64(buf));
    }
-   return (block_hash * tab_multiply_shift_xor) >> 64;
+   return (block_hash * original_tab_multiply_shift_xor) >> 64;
 }
 
 
@@ -187,7 +191,7 @@ static uint64_t tabulation_hash(const void * key, int len_bytes, uint32_t seed) 
    const uint8_t* buf = (const uint8_t*) key;
 
    // the idea is to compute a fast "signature" of the string before doing
-   // tabulatioin hashing. this signature only has to be collision resistant,
+   // original_tabulatioin hashing. this signature only has to be collision resistant,
    // so we can use the variabe-length-hashing polynomial mod-mersenne scheme
    // from thorup.
    // because of the birthday paradox, the signature needs to be around twice
@@ -204,6 +208,7 @@ static uint64_t tabulation_hash(const void * key, int len_bytes, uint32_t seed) 
    if (len_bytes >= 8) {
       const int len_words = len_bytes/8;
       if (len_words >= TAB_BLOCK_SIZE) {
+         // const uint64_t* words = (const uint64_t*)buf;
          const int len_blocks = len_words/TAB_BLOCK_SIZE;
 
          // to save time, we partition the string in blocks of ~ 256 words.
@@ -211,18 +216,18 @@ static uint64_t tabulation_hash(const void * key, int len_bytes, uint32_t seed) 
          // and since the xor of independent strongly-universal hash functions
          // is also universal, we get a unique value for each block.
          for (int b = 0; b < len_blocks; b++) {
-            uint64_t block_hash = tab_inner_carryless(buf, TAB_BLOCK_SIZE);
-            
+            uint64_t block_hash = original_tab_inner_pair_carryless(buf, TAB_BLOCK_SIZE);
             // finally we combine the block hash using variable length hashing.
             // values have to be less than mersenne for the combination to work.
             // we can shift down, since any shift of multiply-shift outputs is
             // strongly-universal.
-            h = combine61(h, tab_multiply_shift_a, block_hash >> 4);
+            h = combine61(h, original_tab_multiply_shift_a, (original_tab_multiply_shift_c * block_hash) >> 67);
          }
 
          // in principle we should finish the mersenne modular reduction.
          // however, this isn't be needed, since it can never reduce collisions.
          // if (h >= TAB_MERSENNE_61) h -= TAB_MERSENNE_61;
+         // buf = (const uint8_t*)words;
       }
 
       // then read the remaining words
@@ -231,7 +236,7 @@ static uint64_t tabulation_hash(const void * key, int len_bytes, uint32_t seed) 
       //    h ^= pair_carryless(buf, remaining_words);
       // } else {
          for (int i = 0; i < remaining_words; i++, buf += 8) {
-            h ^= tab_multiply_shift_random[i] * take64(buf) >> 64;
+            h ^= original_tab_multiply_shift_random[i] * take64(buf) >> 64;
          }
       // }
    }
@@ -243,33 +248,34 @@ static uint64_t tabulation_hash(const void * key, int len_bytes, uint32_t seed) 
       if (remaining_bytes & 4) {last = take32(buf); buf += 4;}
       if (remaining_bytes & 2) {last = (last << 16) | take16(buf); buf += 2;}
       if (remaining_bytes & 1) {last = (last << 8) | take08(buf);}
-      h ^= tab_multiply_shift_b * last >> 64;
+      h ^= original_tab_multiply_shift_b * last >> 64;
    }
 
    return finalize_tabulation(h);
 }
 
-static __uint128_t tab_rand128() {
-   return (__uint128_t)tab_rand64() << 64 | tab_rand64();
+static __uint128_t original_tab_rand128() {
+   return (__uint128_t)original_tab_rand64() << 64 | original_tab_rand64();
 }
 
 static void tabulation_seed_init(size_t seed) {
    srand(seed);
    // the lazy mersenne combination requires 60 bits values in the polynomial.
-   tab_multiply_shift_a = tab_rand128() & ((1ull<<60)-1);
-   tab_multiply_shift_b = tab_rand128();
-   tab_multiply_shift_xor = tab_rand128() | 1;
+   original_tab_multiply_shift_a = original_tab_rand128() & ((1ull<<60)-1);
+   original_tab_multiply_shift_b = original_tab_rand128();
+   original_tab_multiply_shift_c = original_tab_rand128();
+   original_tab_multiply_shift_xor = original_tab_rand128() | 1;
    for (int i = 0; i < TAB_BLOCK_SIZE; i++) {
-      tab_multiply_shift_random[i] = tab_rand128();
-      tab_multiply_xor_random[i]   = tab_rand64();
-      tab_carryless_random[i]      = _mm_set_epi64x(0, tab_rand64());
+      original_tab_multiply_shift_random[i] = original_tab_rand128();
+      original_tab_multiply_xor_random[i]   = original_tab_rand64();
+      original_tab_carryless_random[i]      = _mm_set_epi64x(0, original_tab_rand64());
       if((i&1) == 0) {
-         tab_pair_carryless_random[i/2] = _mm_set_epi64x(tab_rand64(), tab_rand64());
+         original_tab_pair_carryless_random[i/2] = _mm_set_epi64x(original_tab_rand64(), original_tab_rand64());
       }
    }
    for (int i = 0; i < 64/CHAR_SIZE; i++)
       for (int j = 0; j < 1<<CHAR_SIZE; j++)
-         tabulation[i][j] = tab_rand128();
+         tabulation[i][j] = original_tab_rand128();
 }
 
 #endif
