@@ -166,6 +166,10 @@ HashInfo g_hashes[] =
   { tabulation_test,      64, 0, "tabulation",      "64-bit Tabulation with Multiply-Shift Mixer", GOOD },
 #endif
   { tabulation_32_test,   32, 0, "tabulation32",    "32-bit Tabulation with Multiply-Shift Mixer", POOR },
+#ifdef __SIZEOF_INT128__
+  { tab_carryless_test,     64, 0, "tab_carryless",    "64-bit Tabulation with Pair-Carryless Mixer", GOOD },
+  { tab_parallel_test,      64, 0, "tab_parallel",     "64-bit Tabulation with Parallel Mixer", GOOD },
+#endif
 #if defined(__SSE4_2__) && defined(__x86_64__)
   /* Even 32 uses crc32q, quad only */
   { crc32c_hw_test,       32, 0x0C7346F0, "crc32_hw",    "SSE4.2 crc32 in HW", POOR },
@@ -442,6 +446,10 @@ void Hash_init (HashInfo* info) {
     poly_mersenne_init();
   else if(info->hash == tabulation_test)
     tabulation_init();
+  else if(info->hash == tab_carryless_test)
+    tab_carryless_init();
+  else if(info->hash == tab_parallel_test)
+    tab_parallel_init();
 #endif
   else if(info->hash == tabulation_32_test)
     tabulation_32_init();
@@ -488,6 +496,8 @@ void Hash_Seed_init (pfHash hash, size_t seed) {
     poly_mersenne_seed_init(seed);
   else if(hash == tabulation_test)
     tabulation_seed_init(seed);
+  else if(hash == tab_carryless_test)
+    tab_carryless_seed_init(seed);
 #endif
   else if(hash == tabulation_32_test)
     tabulation_32_seed_init(seed);
