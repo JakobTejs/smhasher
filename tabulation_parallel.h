@@ -27,7 +27,12 @@ namespace Tabulation {
     static uint64_t     random_2[BLOCK_SIZE];
     static __uint128_t  random_128[BLOCK_SIZE];
 
-    static uint64_t     tabulation[8][256];
+    static const uint32_t MAXIMUM_REPETITION = 4;
+
+    static uint64_t random_multiple[MAXIMUM_REPETITION][BLOCK_SIZE];
+
+
+    static uint64_t     tabulation_table[8][256];
 
     static uint64_t combine(uint64_t acc, uint64_t block_hash, uint64_t a) {
         __uint128_t val = (__uint128_t)a * acc + block_hash;
@@ -51,7 +56,7 @@ namespace Tabulation {
 
                     // Vector add x+a mod 2^32.
                     // In contrast to mul, there is no epu version.
-                    __m256i const tmp  = _mm256_add_epi32(x, a);
+                    __m256i const tmp  = _mm256_add_epi64(x, a);
 
                     // Align high values into low values, to prepare for pair multiplication
                     __m256i const tmp2 =  _mm256_srli_epi64(tmp, 32); //shuffle_epi32(tmp, _MM_SHUFFLE(0, 3, 0, 1));
@@ -163,14 +168,53 @@ namespace Tabulation {
             return (d*(x[0] + x[1] + x[2] + x[3])) >> 64;
         }
 
+        template<const uint32_t REPS>
+        static uint64_t vector_nh32_multiple(const uint64_t* random_multiple[REPS],  const uint8_t* data) {
+            __m256i acc[REPS]; 
+
+            const  __m256i* const input  = (const __m256i *)data;
+
+            const  __m256i* _random[REPS];
+            for (size_t l = 0; l < REPS; ++l) {
+                acc[l]     = _mm256_set_epi64x(0, 0, 0, 0);
+                _random[l] = (const __m256i*) random_multiple[l];
+            }
+
+            // We eat 256 bits (4 words) for each iteration
+            for (size_t i = 0; i < BLOCK_SIZE/4;) {
+                // __builtin_prefetch((data + 16*i + 384), 0 , 3 );
+                for(size_t j = 0; j < 2; ++j, ++i) {
+                    __m256i const x = _mm256_loadu_si256(input + i);
+
+                    __m256i a[REPS];
+                    for (size_t l = 0; l < REPS; ++l) {
+                        a[l]            = _mm256_loadu_si256(_random[l] + i);
+                        __m256i tmp     = _mm256_add_epi32(x, a[l]);
+                        __m256i tmp2    = _mm256_srli_epi64(tmp, 32);
+                        __m256i product = _mm256_mul_epu32(tmp, tmp2);
+                        acc[l]          = _mm256_add_epi64(acc[l], product);
+                    }
+                }
+            }
+
+            __m256i res = _mm256_set_epi64x(0, 0, 0, 0);;
+            for (size_t l = 0; l < REPS; ++l) {
+                res = _mm256_add_epi64(acc[l], res);
+            }
+
+            uint64_t x[4];
+            memcpy(&x, &res, sizeof(x));
+            return (d*(x[0] + x[1] + x[2] + x[3])) >> 64;
+        }
+
         static uint64_t scalar_nh32(const uint64_t* random, const uint8_t* data) {
             uint64_t block_hash = 0;
-            for (size_t i = 0; i < BLOCK_SIZE; ++i) {
-                    // __builtin_prefetch((data + 32*i + 384), 0 , 3 );
-                    // for(size_t j = 0; j < 32; ++j, ++i) {
+            for (size_t i = 0; i < BLOCK_SIZE;) {
+                    __builtin_prefetch((data + 32*i + 384), 0 , 3 );
+                    for(size_t j = 0; j < 8; ++j, ++i) {
                         uint64_t x = random[i] + ttake64(data);
                         block_hash += (x >> 32)*((uint32_t)x);
-                    // }
+                    }
             }
             return (b * block_hash) >> 64;
         }
@@ -182,7 +226,7 @@ namespace Tabulation {
             memcpy(&x, &h, sizeof(x));
             uint64_t res = 0;
             for (int i = 0; i < 8; i++)
-                res ^= ::tabulation[i][x[i]];
+                res ^= tabulation_table[i][x[i]];
             return res;
         }
 
@@ -191,7 +235,7 @@ namespace Tabulation {
             memcpy(&x, &h, sizeof(x));
             uint64_t res = 0;
             for (int i = 0; i < 4; i++)
-                res ^= ::tabulation[i][x[i]];
+                res ^= tabulation_table[i][x[i]];
             return res;
         }
 
@@ -243,11 +287,18 @@ static uint64_t tab_parallel_hash(const void* key, int len_bytes, uint32_t seed)
     if (len_bytes >= 8) {
         int len_words = len_bytes / 8;
 
+        // const uint32_t REPS = 4;
+        // const uint64_t* random_multiple[REPS];
+        // for (int i = 0; i < REPS; ++i) {
+        //     random_multiple[i] = Tabulation::random_multiple[i];
+        // }
+
         while (len_words >= Tabulation::BLOCK_SIZE) {
             // uint64_t block_hash = Tabulation::Block::vector_nh32(Tabulation::random, data);
             // uint64_t block_hash = Tabulation::Block::carryless(Tabulation::random, data);
             // uint64_t block_hash = Tabulation::Block::vector_nh32_stribe(Tabulation::random, data);
             // uint64_t block_hash = Tabulation::Block::vector_nh32_double(Tabulation::random, Tabulation::random_2, data);
+            // uint64_t block_hash = Tabulation::Block::vector_nh32_multiple<REPS>(random_multiple, data);
             uint64_t block_hash = Tabulation::Block::scalar_nh32(Tabulation::random, data);
             
             val = Tabulation::combine(val, block_hash >> 4, Tabulation::a);
@@ -260,7 +311,19 @@ static uint64_t tab_parallel_hash(const void* key, int len_bytes, uint32_t seed)
         // We want to use something simple here, that doesn't require warming
         // up AVX. We can use plain NH-hash or Mult-shift.
         for (size_t i = 0; i < len_words; ++i)
-            val ^= (Tabulation::random_128[i] * ttake64(data)) >> 64;
+            val += (Tabulation::random_128[i] * ttake64(data)) >> 64;
+
+        // for (size_t i = 0; i < len_words/4; ++i) {
+        //     for (size_t j = 0; j < 4; ++j) {
+        //         uint64_t x = Tabulation::random[i * 4 + j] + ttake64(data);
+        //         val += (x >> 32)*((uint32_t)x);
+        //     }
+        // }
+
+        // for (size_t i = 0; i < len_words % 4; ++i) {
+        //     uint64_t x = Tabulation::random[len_words/4 + i] + ttake64(data);
+        //     val += (x >> 32)*((uint32_t)x);
+        // }
 
         // Even with MUM this seems slower
         // __uint128_t acc = 0;
@@ -273,16 +336,32 @@ static uint64_t tab_parallel_hash(const void* key, int len_bytes, uint32_t seed)
 
     uint32_t remaining_bytes = len_bytes % 8;
     if (remaining_bytes) {
+        // uint8_t last_bytes[8];
+        // uint64_t last = 0;
+        // if (remaining_bytes & 4) {
+        //     memcpy(last_bytes, data, 4);
+        //     data += 4;
+        // }
+        // if (remaining_bytes & 2) {
+        //     memcpy(last_bytes + 4, data, 2);
+        //     data += 2;
+        // }
+        // if (remaining_bytes & 1) {
+        //     memcpy(last_bytes + 6, data, 1);
+        //     data += 1;
+        // }
+
+        // memcpy(&last, last_bytes, 8);
         uint64_t last = 0;
-        if (remaining_bytes & 4) last = ttake32(data);
+        if (remaining_bytes & 4) last = ttake32(data);  
         if (remaining_bytes & 2) last = (last << 16) | ttake16(data);
         if (remaining_bytes & 1) last = (last << 8) | ttake08(data);
         val ^= (Tabulation::b * last) >> 64;
     }
 
 
-    // return Tabulation::Finalizer::murmur(val);
-    return Tabulation::Finalizer::tabulation(val);
+    return Tabulation::Finalizer::murmur(val);
+    // return Tabulation::Finalizer::tabulation(val);
     // return Tabulation::Finalizer::tabulation_32((val >> 32) ^ (seed << 8) ^ len_bytes);
     // return Tabulation::Finalizer::poly(val, 3);
 }
@@ -294,6 +373,9 @@ static void tab_parallel_seed_init(uint32_t seed) {
         Tabulation::random[i] = tab_parallel_rand64();
         Tabulation::random_2[i] = tab_parallel_rand64();
         Tabulation::random_128[i] = tab_parallel_rand128();
+        for (int j = 0; j < Tabulation::MAXIMUM_REPETITION; ++j) {
+            Tabulation::random_multiple[j][i] = tab_parallel_rand64();
+        }
     }
     Tabulation::a = tab_parallel_rand64() >> 3;
     Tabulation::b = tab_parallel_rand128();
@@ -302,7 +384,7 @@ static void tab_parallel_seed_init(uint32_t seed) {
 
     for (int i = 0; i < 8; ++i) {
         for (int j = 0; j < 256; ++j) {
-            Tabulation::tabulation[i][j] = tab_parallel_rand64();
+            Tabulation::tabulation_table[i][j] = tab_parallel_rand64();
         }
     }
 }
