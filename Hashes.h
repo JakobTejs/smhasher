@@ -494,7 +494,7 @@ void clhash_test (const void * key, int len, uint32_t seed, void * out);
    }
    // objsize: 40b9b0 - 40bd00: 848
    inline void tabulation_32_test (const void * key, int len, uint32_t seed, void * out) {
-      *(uint32_t*)out = tabulation_32_hash(key, len, seed);
+      *(uint64_t*)out = tabulation_32_hash(key, len, seed);
    }
 #endif
 
