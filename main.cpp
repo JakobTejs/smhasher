@@ -582,6 +582,7 @@ void test ( hashfunc<hashtype> hash, HashInfo* info )
   if(g_testSpeed || g_testAll)
   {
     double sum = 0.0;
+    double var = 0.0;
     printf("[[[ Speed Tests ]]]\n\n");
     fflush(NULL);
 
@@ -593,10 +594,13 @@ void test ( hashfunc<hashtype> hash, HashInfo* info )
     for(int i = 1; i < 32; i++)
     {
       volatile int j = i;
-      sum += TinySpeedTest(hashfunc<hashtype>(info->hash),sizeof(hashtype),j,info->verification,true);
+      double stdv;
+      sum += TinySpeedTest(hashfunc<hashtype>(info->hash),sizeof(hashtype),j,info->verification,true,&stdv);
+      var += stdv*stdv;
     }
     g_speed = sum = sum / 31.0;
-    printf("Average                                    %6.3f cycles/hash\n",sum);
+    double stdv = sqrt(var / 31.0);
+    printf("Average                                    %6.3f ± %4.3f cycles/hash\n",sum,stdv);
     printf("\n");
     fflush(NULL);
   } else {
