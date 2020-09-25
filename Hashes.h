@@ -489,28 +489,13 @@ void clhash_test (const void * key, int len, uint32_t seed, void * out);
    }
    // insecure: hashes cancel itself out, as with poly_X and CRC
    // objsize: 40b780 - 40b9aa: 554
-   inline void tabulation_test (const void * key, int len, uint32_t seed, void * out) {
-      *(uint64_t*)out = tabulation_hash(key, len, seed);
+   inline void tabulation_64_test (const void * key, int len, uint32_t seed, void * out) {
+      *(uint64_t*)out = tabulation_64_hash(key, len, seed);
    }
-#endif
-
-inline void tabulation_32_init() {
-   tabulation_32_seed_init(0);
-}
-// objsize: 40b9b0 - 40bd00: 848
-inline void tabulation_32_test (const void * key, int len, uint32_t seed, void * out) {
-   *(uint32_t*)out = tabulation_32_hash(key, len, seed);
-}
-
-#ifdef __SIZEOF_INT128__
-  #include "tabulation_parallel.h"
-  inline void tab_parallel_init() {
-    tab_parallel_seed_init(2);
-  }
-
-  inline void tab_parallel_test (const void * key, int len, uint32_t seed, void* out) {
-    *(uint64_t*)out = tab_parallel_hash(key, len, seed);
-  }
+   // objsize: 40b9b0 - 40bd00: 848
+   inline void tabulation_32_test (const void * key, int len, uint32_t seed, void * out) {
+      *(uint32_t*)out = tabulation_32_hash(key, len, seed);
+   }
 #endif
 
 void HighwayHash_init();

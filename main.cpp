@@ -160,17 +160,14 @@ HashInfo g_hashes[] =
 #ifdef __SIZEOF_INT128__
   // Thomas Dybdahl Ahle, Jakob Tejs Bæk Knudsen, and Mikkel Thorup2
   // "The Power of Hashing with Mersenne Primes".
-  // Similar insecurity as with CRC, hashes cancel itself out.
   { poly_1_mersenne,      32, 0, "poly_1_mersenne", "Degree 1 Hashing mod 2^61-1", POOR },
   { poly_2_mersenne,      32, 0, "poly_2_mersenne", "Degree 2 Hashing mod 2^61-1", GOOD },
   { poly_3_mersenne,      32, 0, "poly_3_mersenne", "Degree 3 Hashing mod 2^61-1", GOOD },
   { poly_4_mersenne,      32, 0, "poly_4_mersenne", "Degree 4 Hashing mod 2^61-1", GOOD },
-  // Similar insecurity as with CRC, hashes cancel itself out.
-  { tabulation_test,      64, 0, "tabulation",      "64-bit Tabulation with Multiply-Shift Mixer", GOOD },
 #endif
-  { tabulation_32_test,   32, 0, "tabulation32",    "32-bit Tabulation with Multiply-Shift Mixer", POOR },
 #ifdef __SIZEOF_INT128__
-  { tab_parallel_test,      64, 0, "tab_parallel",     "64-bit Tabulation with Parallel Mixer", GOOD },
+  { tabulation_32_test,   32, 0, "tab32",    "Tabulation with 32-bit internal state", GOOD },
+  { tabulation_64_test,   64, 0, "tab64",    "Tabulation with 64-bit internal state", GOOD },
 #endif
 #if defined(__SSE4_2__) && defined(__x86_64__)
   /* Even 32 uses crc32q, quad only */
@@ -446,13 +443,9 @@ void Hash_init (HashInfo* info) {
     multiply_shift_init();
   else if(info->hash == poly_0_mersenne || info->hash == poly_1_mersenne || info->hash == poly_2_mersenne || info->hash == poly_3_mersenne || info->hash == poly_4_mersenne)
     poly_mersenne_init();
-  else if(info->hash == tabulation_test)
+  else if(info->hash == tabulation_32_test || info->hash == tabulation_64_test)
     tabulation_init();
-  else if(info->hash == tab_parallel_test)
-    tab_parallel_init();
 #endif
-  else if(info->hash == tabulation_32_test)
-    tabulation_32_init();
 #if defined(__SSE4_2__) && defined(__x86_64__)
   else if(info->hash == clhash_test)
     clhash_init();
@@ -494,11 +487,9 @@ void Hash_Seed_init (pfHash hash, size_t seed) {
     multiply_shift_seed_init(seed);
   else if(hash == poly_0_mersenne || hash == poly_1_mersenne || hash == poly_2_mersenne || hash == poly_3_mersenne || hash == poly_4_mersenne)
     poly_mersenne_seed_init(seed);
-  else if(hash == tabulation_test)
+  else if(hash == tabulation_32_test || hash == tabulation_64_test)
     tabulation_seed_init(seed);
 #endif
-  else if(hash == tabulation_32_test)
-    tabulation_32_seed_init(seed);
 #if defined(__SSE4_2__) && defined(__x86_64__)
   else if (hash == clhash_test)
     clhash_seed_init(seed);
