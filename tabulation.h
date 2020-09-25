@@ -349,14 +349,6 @@ static uint64_t tabulation_64_hash(const void* key, int len_bytes, uint32_t seed
             val127 = Tabulation::combine127(val127, x[0], Tabulation::a127);
             val127 = Tabulation::combine127(val127, x[1], Tabulation::a127);
 
-            // Add as four characters to the variable length hash.
-            // uint32_t x[4];
-            // memcpy(&x, &block_hash, sizeof(x));
-            // val = Tabulation::combine61(val, x[0], Tabulation::a61);
-            // val = Tabulation::combine61(val, x[1], Tabulation::a61);
-            // val = Tabulation::combine61(val, x[2], Tabulation::a61);
-            // val = Tabulation::combine61(val, x[3], Tabulation::a61);
-
             // We eat TAB_PARALLEL_BLOCK_SIZE 8-byte words. The block-hashes don't
             // automatically increment data.
             data += 8*Tabulation::BLOCK_SIZE;
