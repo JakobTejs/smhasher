@@ -6,6 +6,7 @@
 #include "AvalancheTest.h"
 #include "DifferentialTest.h"
 #include "HashMapTest.h"
+#include "NonEmptyTest.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -37,6 +38,7 @@ bool g_testDiffDist    = false;
 bool g_testMomentChi2  = false;
 bool g_testPrng        = false;
 bool g_testBIC         = false;
+bool g_testNonEmpty    = false;
 //bool g_testLongNeighbors = false;
 
 double g_speed = 0.0;
@@ -67,6 +69,7 @@ TestOpts g_testopts[] =
   { g_testBIC, 	        "BIC" },
   { g_testMomentChi2,   "MomentChi2" },
   { g_testPrng,         "Prng" },
+  { g_testNonEmpty,     "NonEmpty" },
   //{ g_testLongNeighbors,"LongNeighbors" }
 };
 
@@ -1358,6 +1361,23 @@ void test ( hashfunc<hashtype> hash, HashInfo* info )
     result &= PrngTest<hashtype>( hash, testCollision, testDistribution, g_drawDiagram );
 
     if(!result) printf("\n*********FAIL*********\n");
+    printf("\n");
+    fflush(NULL);
+  }
+
+  if (g_testNonEmpty || g_testAll)
+  {
+    printf("[[[ Non-Empty Bin Tests ]]]\n\n");
+
+    ShortNonEmptyTest ( hash, 100 );
+    // bool testCollision = true;
+    // bool testDistribution = g_testExtra;
+
+    // bool result = true;
+    // Seed_init (info, 0);
+    // result &= PrngTest<hashtype>( hash, testCollision, testDistribution, g_drawDiagram );
+
+    // if(!result) printf("\n*********FAIL*********\n");
     printf("\n");
     fflush(NULL);
   }
