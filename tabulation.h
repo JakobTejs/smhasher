@@ -160,18 +160,17 @@ namespace Tabulation {
             }
          }
 
-         // PH gives 128 bits, no?
+         // We don't have to complete the modulo. Just return all 128 bits.
          __uint128_t res;
          memcpy(&res, &acc, 16);
          return res;
 
-         // TODO: What were we doing here?
-
+         // Complete the modulo P64.
          // Take the high bits for the first and low bits for the second
-         //__m128i q1 = _mm_clmulepi64_si128(acc, P64, 0x01);
+         // __m128i q1 = _mm_clmulepi64_si128(acc, P64, 0x01);
          // Take the high bits for the first and low bits for the second
-         //__m128i q2 = _mm_clmulepi64_si128(q2, P64, 0x01);
-         //return _mm_cvtsi128_si64(acc ^ q1 ^ q2);
+         // __m128i q2 = _mm_clmulepi64_si128(q2, P64, 0x01);
+         // return _mm_cvtsi128_si64(acc ^ q1 ^ q2);
       }
 
       // This gives 64 bit security by using mul_epu32 twice.
