@@ -212,7 +212,7 @@ NEVER_INLINE int64_t timehash_small ( pfHash hash, const void * key, int len, in
 
 //-----------------------------------------------------------------------------
 
-double SpeedTest ( pfHash hash, uint32_t seed, const int trials, const int blocksize, const int align )
+double SpeedTest ( pfHash hash, uint32_t seed, const int trials, const int blocksize, const int align, double* stdv)
 {
   Rand r(seed);
   uint8_t *buf = new uint8_t[blocksize + 512];
@@ -256,6 +256,7 @@ double SpeedTest ( pfHash hash, uint32_t seed, const int trials, const int block
   
   delete [] buf;
   
+  *stdv = CalcStdv(times);
   return CalcMean(times);
 }
 
@@ -264,40 +265,46 @@ double SpeedTest ( pfHash hash, uint32_t seed, const int trials, const int block
 
 void BulkSpeedTest ( pfHash hash, uint32_t seed )
 {
-  const int trials = 2999;
+  const int trials = 29999;
   const int blocksize = 256 * 1024;
 
   printf("Bulk speed test - %d-byte keys\n",blocksize);
   double sumbpc = 0.0;
 
-  volatile double warmup_cycles = SpeedTest(hash,seed,trials,blocksize,0);
+  double stdv;
+  volatile double warmup_cycles = SpeedTest(hash,seed,trials,blocksize,0,&stdv);
 
+  double sumvar = 0;
   for(int align = 7; align >= 0; align--)
   {
-    double cycles = SpeedTest(hash,seed,trials,blocksize,align);
+    double stdv;
+    double cycles = SpeedTest(hash,seed,trials,blocksize,align,&stdv);
 
     double bestbpc = double(blocksize)/cycles;
+    double stdvbpc = double(blocksize)*(1/(cycles - stdv) - 1/cycles);
 
     double bestbps = (bestbpc * 3000000000.0 / 1048576.0);
-    printf("Alignment %2d - %6.3f bytes/cycle - %7.2f MiB/sec @ 3 ghz\n",align,bestbpc,bestbps);
+    printf("Alignment %2d - %6.3f ± %4.3f bytes/cycle - %7.2f MiB/sec @ 3 ghz\n",align,bestbpc,stdvbpc, bestbps);
     sumbpc += bestbpc;
+    sumvar += stdvbpc*stdvbpc;
   }
   sumbpc = sumbpc / 8.0;
-  printf("Average      - %6.3f bytes/cycle - %7.2f MiB/sec @ 3 ghz\n",sumbpc,(sumbpc * 3000000000.0 / 1048576.0));
+  double totstdv = sqrt(sumvar / 8.0);
+  printf("Average      - %6.3f ± %4.3f bytes/cycle - %7.2f MiB/sec @ 3 ghz\n",sumbpc,totstdv,(sumbpc * 3000000000.0 / 1048576.0));
   fflush(NULL);
 }
 
 //-----------------------------------------------------------------------------
 
-double TinySpeedTest ( pfHash hash, int hashsize, int keysize, uint32_t seed, bool verbose )
+double TinySpeedTest ( pfHash hash, int hashsize, int keysize, uint32_t seed, bool verbose, double*stdv )
 {
   const int trials = 99999;
 
   if(verbose) printf("Small key speed test - %4d-byte keys - ",keysize);
   
-  double cycles = SpeedTest(hash,seed,trials,keysize,0);
+  double cycles = SpeedTest(hash,seed,trials,keysize,0,stdv);
   
-  printf("%8.2f cycles/hash\n",cycles);
+  printf("%8.2f ± %4.2f cycles/hash\n",cycles,*stdv);
   return cycles;
 }
 

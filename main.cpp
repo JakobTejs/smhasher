@@ -166,7 +166,7 @@ HashInfo g_hashes[] =
   { poly_4_mersenne,      32, 0, "poly_4_mersenne", "Degree 4 Hashing mod 2^61-1", GOOD },
 #endif
 #ifdef __SIZEOF_INT128__
-  { tabulation_32_test,   32, 0, "tab32",    "Tabulation with 32-bit internal state", GOOD },
+  { tabulation_32_test,   64, 0, "tab32",    "Tabulation with 32-bit internal state", GOOD },
   { tabulation_64_test,   64, 0, "tab64",    "Tabulation with 64-bit internal state", GOOD },
 #endif
 #if defined(__SSE4_2__) && defined(__x86_64__)
@@ -480,7 +480,7 @@ void Hash_Seed_init (pfHash hash, size_t seed) {
   //  md5_seed_init(seed);
   //if (hash == VHASH_32 || hash == VHASH_64)
   //  VHASH_seed_init(seed);
-  if (true)
+  if (false)
      ;
 #ifdef __SIZEOF_INT128__
   else if(hash == multiply_shift || hash == pair_multiply_shift)
@@ -582,6 +582,7 @@ void test ( hashfunc<hashtype> hash, HashInfo* info )
   if(g_testSpeed || g_testAll)
   {
     double sum = 0.0;
+    double var = 0.0;
     printf("[[[ Speed Tests ]]]\n\n");
     fflush(NULL);
 
@@ -593,10 +594,13 @@ void test ( hashfunc<hashtype> hash, HashInfo* info )
     for(int i = 1; i < 32; i++)
     {
       volatile int j = i;
-      sum += TinySpeedTest(hashfunc<hashtype>(info->hash),sizeof(hashtype),j,info->verification,true);
+      double stdv;
+      sum += TinySpeedTest(hashfunc<hashtype>(info->hash),sizeof(hashtype),j,info->verification,true,&stdv);
+      var += stdv*stdv;
     }
     g_speed = sum = sum / 31.0;
-    printf("Average                                    %6.3f cycles/hash\n",sum);
+    double stdv = sqrt(var / 31.0);
+    printf("Average                                    %6.3f ± %4.3f cycles/hash\n",sum,stdv);
     printf("\n");
     fflush(NULL);
   } else {
