@@ -188,8 +188,13 @@ namespace Tabulation {
             return (d*(x[0] + x[1] + x[2] + x[3])) >> 64;
          }
 
+         template<const uint32_t REPS>
+         struct nh32_multiple_return {
+            uint64_t vals[REPS];
+         };
+
         template<const uint32_t REPS>
-        static uint64_t vector_nh32_multiple(const uint64_t* random_multiple[REPS],  const uint8_t* data) {
+        static nh32_multiple_return<REPS> vector_nh32_multiple(const uint64_t* random_multiple[REPS],  const uint8_t* data) {
             __m256i acc[REPS]; 
 
             const  __m256i* const input  = (const __m256i *)data;
@@ -201,9 +206,9 @@ namespace Tabulation {
             }
 
             // We eat 256 bits (4 words) for each iteration
-            for (size_t i = 0; i < BLOCK_SIZE/4;) {
-                // __builtin_prefetch((data + 16*i + 384), 0 , 3 );
-                for(size_t j = 0; j < 2; ++j, ++i) {
+            for (size_t i = 0; i < BLOCK_SIZE/4; ++i) {
+               //  __builtin_prefetch((data + 16*i + 384), 0 , 3 );
+               //  for(size_t j = 0; j < 2; ++j, ++i) {
                     __m256i const x = _mm256_loadu_si256(input + i);
 
                     __m256i a[REPS];
@@ -214,21 +219,25 @@ namespace Tabulation {
                         __m256i product = _mm256_mul_epu32(tmp, tmp2);
                         acc[l]          = _mm256_add_epi64(acc[l], product);
                     }
-                }
+               //  }
             }
 
-            __m256i res = _mm256_set_epi64x(0, 0, 0, 0);;
+            uint64_t vals[REPS];
             for (size_t l = 0; l < REPS; ++l) {
-                res = _mm256_add_epi64(acc[l], res);
+               uint64_t x[4];
+               memcpy(&x, acc + l, sizeof(x));
+               vals[l] = x[0] + x[1] + x[2] + x[3];
             }
 
-            uint64_t x[4];
-            memcpy(&x, &res, sizeof(x));
-            return (d*(x[0] + x[1] + x[2] + x[3])) >> 64;
+            nh32_multiple_return<REPS> ret;
+            memcpy(&ret, vals, sizeof(ret));
+
+            return ret;
+
+            // uint64_t x[4];
+            // memcpy(&x, &res, sizeof(x));
+            // return (d*(x[0] + x[1] + x[2] + x[3])) >> 64;
         }
-
-
-
       #endif
 
       static uint64_t scalar_nh32(const uint64_t* random, const uint8_t* data) {
@@ -311,7 +320,23 @@ static uint64_t tabulation_64_hash(const void* key, int len_bytes, uint32_t seed
    if (len_bytes >= 8) {
       int len_words = len_bytes / 8;
 
+        const uint32_t REPS = 2;
+        const uint64_t* random_multiple[REPS];
+        for (int i = 0; i < REPS; ++i) {
+            random_multiple[i] = Tabulation::random_multiple[i];
+        }
+
       while (len_words >= Tabulation::BLOCK_SIZE) {
+         // uint64_t block_hash = 0;
+
+         // Tabulation::Block::nh32_multiple_return<REPS> tmp = Tabulation::Block::vector_nh32_multiple<REPS>(random_multiple, data);
+         // uint64_t acc[REPS];
+         // memcpy(acc, &tmp, sizeof(acc));
+
+         // for (int i = 0; i < REPS; ++i) {
+         //    block_hash += (acc[i] * Tabulation::random_128[i]) >> 64;
+         // }
+
          #if defined(__SSE4_2__) && defined(__x86_64__)
             uint64_t block_hash = Tabulation::Block::carryless(Tabulation::random, data);
          #elif
