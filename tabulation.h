@@ -204,53 +204,49 @@ namespace Tabulation {
                acc = _mm256_add_epi64(acc, product);
             }
          }
+      }
 
-         template<const uint32_t REPS>
-         struct nh32_multiple_return {
-            uint64_t vals[REPS];
-         };
+      template<const uint32_t REPS>
+      struct nh32_multiple_return {
+         uint64_t vals[REPS];
+      };
 
-        template<const uint32_t REPS>
-        static nh32_multiple_return<REPS> vector_nh32_multiple(const uint64_t* random_multiple[REPS],  const uint8_t* data) {
-            __m256i acc[REPS]; 
-
+      template<const uint32_t REPS>
+      static nh32_multiple_return<REPS> vector_nh32_multiple(const uint64_t* random_multiple[REPS],  const uint8_t* data) {
+         __m256i acc[REPS]; 
 
          const  __m256i* const input  = (const __m256i *)data;
+         const  __m256i* const _random[REPS]  = (const __m256i *)random_multiple;
 
-            // We eat 256 bits (4 words) for each iteration
-            for (size_t i = 0; i < BLOCK_SIZE/4; ++i) {
-               //  __builtin_prefetch((data + 16*i + 384), 0 , 3 );
-               //  for(size_t j = 0; j < 2; ++j, ++i) {
-                    __m256i const x = _mm256_loadu_si256(input + i);
+         // We eat 256 bits (4 words) for each iteration
+         for (size_t i = 0; i < BLOCK_SIZE/4; ++i) {
+            //  __builtin_prefetch((data + 16*i + 384), 0 , 3 );
+            //  for(size_t j = 0; j < 2; ++j, ++i) {
+            __m256i const x = _mm256_loadu_si256(input + i);
 
-                    __m256i a[REPS];
-                    for (size_t l = 0; l < REPS; ++l) {
-                        a[l]            = _mm256_loadu_si256(_random[l] + i);
-                        __m256i tmp     = _mm256_add_epi32(x, a[l]);
-                        __m256i tmp2    = _mm256_srli_epi64(tmp, 32);
-                        __m256i product = _mm256_mul_epu32(tmp, tmp2);
-                        acc[l]          = _mm256_add_epi64(acc[l], product);
-                    }
-               //  }
-            }
-
-            uint64_t vals[REPS];
+            __m256i a[REPS];
             for (size_t l = 0; l < REPS; ++l) {
-               uint64_t x[4];
-               memcpy(&x, acc + l, sizeof(x));
-               vals[l] = x[0] + x[1] + x[2] + x[3];
+               a[l]            = _mm256_loadu_si256(_random[l] + i);
+               __m256i tmp     = _mm256_add_epi32(x, a[l]);
+               __m256i tmp2    = _mm256_srli_epi64(tmp, 32);
+               __m256i product = _mm256_mul_epu32(tmp, tmp2);
+               acc[l]          = _mm256_add_epi64(acc[l], product);
             }
+            //  }
          }
 
-            nh32_multiple_return<REPS> ret;
-            memcpy(&ret, vals, sizeof(ret));
+         uint64_t vals[REPS];
+         for (size_t l = 0; l < REPS; ++l) {
+            uint64_t x[4];
+            memcpy(&x, acc + l, sizeof(x));
+            vals[l] = x[0] + x[1] + x[2] + x[3];
+         }
 
-            return ret;
+         nh32_multiple_return<REPS> ret;
+         memcpy(&ret, vals, sizeof(ret));
 
-            // uint64_t x[4];
-            // memcpy(&x, &res, sizeof(x));
-            // return (d*(x[0] + x[1] + x[2] + x[3])) >> 64;
-        }
+         return ret;
+      }
       #endif
 
       static uint64_t scalar_nh32(const uint64_t* random, const uint8_t* data) {
