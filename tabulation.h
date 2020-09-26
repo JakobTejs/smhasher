@@ -36,7 +36,7 @@ namespace Tabulation {
    static uint64_t     table_32[4][256];
 
    static const uint32_t MAXIMUM_REPETITION = 4;
-   static uint64_t random_multiple[MAXIMUM_REPETITION][BLOCK_SIZE];
+   static uint64_t random_multiple[MAXIMUM_REPETITION*BLOCK_SIZE];
 
    static const __m128i P64 = _mm_set_epi64x(0, (uint64_t)1 + ((uint64_t)1<<1) + ((uint64_t)1<<3) + ((uint64_t)1<<4));
 
@@ -84,7 +84,7 @@ namespace Tabulation {
          random_2[i] =   rand128();
          random_128[i] = rand128();
          for (int j = 0; j < Tabulation::MAXIMUM_REPETITION; ++j)
-            random_multiple[j][i] = rand128();
+            random_multiple[i*Tabulation::MAXIMUM_REPETITION + j] = rand128();
       }
       a61 = rand128() % MERSENNE_61;
       a127 = rand128() % MERSENNE_127;
@@ -175,11 +175,12 @@ namespace Tabulation {
 
       // This gives 64 bit security by using mul_epu32 twice.
       // Seems to be slower than 64 bit carry-less on our machines.
-      static uint64_t vector_nh32_double(
+      static __uint128_t vector_nh32_double(
             const uint64_t* random1,
             const uint64_t* random2,
             const uint8_t* data) {
-         __m256i acc = _mm256_set_epi64x(0, 0, 0, 0);
+         __m256i acc1 = _mm256_set_epi64x(0, 0, 0, 0);
+         __m256i acc2 = _mm256_set_epi64x(0, 0, 0, 0);
 
          const  __m256i* const input  = (const __m256i *)data;
          const  __m256i* const _random1 = (const __m256i *)random1;
@@ -196,14 +197,18 @@ namespace Tabulation {
                __m256i tmp  = _mm256_add_epi32(x, a1);
                __m256i tmp2 = _mm256_srli_epi64(tmp, 32);
                __m256i product =  _mm256_mul_epu32(tmp, tmp2);
-               acc = _mm256_add_epi64(acc, product);
+               acc1 = _mm256_add_epi64(acc1, product);
 
                tmp  = _mm256_add_epi32(x, a2);
                tmp2 = _mm256_srli_epi64(tmp, 32);
                product =  _mm256_mul_epu32(tmp, tmp2);
-               acc = _mm256_add_epi64(acc, product);
+               acc2 = _mm256_add_epi64(acc2, product);
             }
          }
+         uint64_t x1[4], x2[4];
+         memcpy(&x1, &acc1, sizeof(x1));
+         memcpy(&x2, &acc2, sizeof(x2));
+         return (__uint128_t)(x1[0] + x1[1] + x1[2] + x1[3]) << 64 | (x2[0] + x2[1] + x2[2] + x2[3]);
       }
 
       template<const uint32_t REPS>
@@ -212,27 +217,27 @@ namespace Tabulation {
       };
 
       template<const uint32_t REPS>
-      static nh32_multiple_return<REPS> vector_nh32_multiple(const uint64_t* random_multiple[REPS],  const uint8_t* data) {
+      static nh32_multiple_return<REPS> vector_nh32_multiple(const uint64_t* random,  const uint8_t* data) {
          __m256i acc[REPS]; 
 
-         const  __m256i* const input  = (const __m256i *)data;
-         const  __m256i* const _random[REPS]  = (const __m256i *)random_multiple;
+         const  __m256i* const input   = (const __m256i *)data;
+         const  __m256i* const _random = (const __m256i *)random;
 
          // We eat 256 bits (4 words) for each iteration
-         for (size_t i = 0; i < BLOCK_SIZE/4; ++i) {
-            //  __builtin_prefetch((data + 16*i + 384), 0 , 3 );
-            //  for(size_t j = 0; j < 2; ++j, ++i) {
+         for (size_t i = 0; i < BLOCK_SIZE/4;) {
+             __builtin_prefetch((data + 16*i + 384), 0 , 3 );
+             for(size_t j = 0; j < 2; ++j, ++i) {
             __m256i const x = _mm256_loadu_si256(input + i);
 
             __m256i a[REPS];
             for (size_t l = 0; l < REPS; ++l) {
-               a[l]            = _mm256_loadu_si256(_random[l] + i);
+               a[l]            = _mm256_loadu_si256(_random + i*REPS + l);
                __m256i tmp     = _mm256_add_epi32(x, a[l]);
                __m256i tmp2    = _mm256_srli_epi64(tmp, 32);
                __m256i product = _mm256_mul_epu32(tmp, tmp2);
                acc[l]          = _mm256_add_epi64(acc[l], product);
             }
-            //  }
+             }
          }
 
          uint64_t vals[REPS];
@@ -257,6 +262,19 @@ namespace Tabulation {
             block_hash += (x >> 32)*(uint32_t)x;
          }
          return block_hash;
+      }
+
+      static __uint128_t scalar_nh32_double(const uint64_t* random1, const uint64_t* random2, const uint8_t* data) {
+         uint64_t acc1 = 0;
+         uint64_t acc2 = 0;
+         for (size_t i = 0; i < BLOCK_SIZE; i++) {
+            // Parallel addition helps auto-vectorization
+            uint64_t x1 = random1[i] + take64(data + 8*i);
+            uint64_t x2 = random2[i] + take64(data + 8*i);
+            acc1 += (x1 >> 32)*(uint32_t)x1;
+            acc2 += (x2 >> 32)*(uint32_t)x2;
+         }
+         return ((__uint128_t)acc1 << 64) |acc2;
       }
 
       static __uint128_t scalar_nh64(const uint64_t* random, const uint8_t* data) {
@@ -318,64 +336,6 @@ static void tabulation_seed_init(uint32_t seed) {
    Tabulation::seed_init(seed);
 }
 
-static uint64_t tabulation_64_hash(const void* key, int len_bytes, uint32_t seed) {
-   const uint8_t* data = (const uint8_t *)key;
-
-   // We use len_bytes as the first character to distinguish vectors of
-   // different length. We also add the seed, even though this hash function
-   // really should be seeded using seed_init, rather than by passing it here.
-   uint64_t val = len_bytes;
-
-   if (len_bytes >= 8) {
-      int len_words = len_bytes / 8;
-
-      if (len_words >= Tabulation::BLOCK_SIZE) {
-         // To keep 64 bit internal state, we need a prime larger than 2^64.
-         // Hence the value needs to be stored in 128 bits.
-         __uint128_t val127 = val;
-         while (len_words >= Tabulation::BLOCK_SIZE) {
-            #if defined(__SSE4_2__) && defined(__x86_64__)
-               __uint128_t block_hash = Tabulation::Block::carryless(Tabulation::random, data);
-            #elif
-               __uint128_t block_hash = Tabulation::Block::scalar_nh64(Tabulation::random, data);
-            #endif
-
-            // Split block_hash into two 64 bit characters that fit under Mersenne-127.
-            uint64_t x[2];
-            memcpy(&x, &block_hash, sizeof(x));
-            // Add both characters to the variable length hash.
-            val127 = Tabulation::combine127(val127, x[0], Tabulation::a127);
-            val127 = Tabulation::combine127(val127, x[1], Tabulation::a127);
-
-            // We eat TAB_PARALLEL_BLOCK_SIZE 8-byte words. The block-hashes don't
-            // automatically increment data.
-            data += 8*Tabulation::BLOCK_SIZE;
-            len_words -= Tabulation::BLOCK_SIZE;
-         }
-         // Now reduce back down to 64 bits.
-         uint64_t x[2];
-         memcpy(&x, &val127, sizeof(x));
-         val = (Tabulation::b + x[0])*(Tabulation::c + x[1]) >> 64;
-      }
-
-      // We want to use something simple here, that doesn't require warming
-      // up AVX. We can use plain NH-hash or Mult-shift.
-      for (size_t i = 0; i < len_words; ++i)
-         val += Tabulation::random_128[i] * ttake64(data) >> 64;
-   }
-
-   int remaining_bytes = len_bytes % 8;
-   if (remaining_bytes) {
-      uint64_t last = 0;
-      if (remaining_bytes & 4) last = ttake32(data);
-      if (remaining_bytes & 2) last = (last << 16) | ttake16(data);
-      if (remaining_bytes & 1) last = (last << 8) | ttake08(data);
-      val += (Tabulation::b * last) >> 64;
-   }
-
-
-   return Tabulation::Finalizer::tabulation_64(val);
-}
 
 static uint64_t tabulation_32_hash(const void* key, int len_bytes, uint32_t seed) {
    const uint8_t* data = (const uint8_t *)key;
@@ -427,4 +387,71 @@ static uint64_t tabulation_32_hash(const void* key, int len_bytes, uint32_t seed
    // result of a multiply-shift hash.
    return Tabulation::Finalizer::tabulation_64(val);
 }
+
+static uint64_t tabulation_64_hash(const void* key, int len_bytes, uint32_t seed) {
+   // return tabulation_32_hash(key, len_bytes, seed) ^ tabulation_32_hash(key, len_bytes, seed << 8);
+
+   const uint8_t* data = (const uint8_t *)key;
+
+   // We use len_bytes as the first character to distinguish vectors of
+   // different length. We also add the seed, even though this hash function
+   // really should be seeded using seed_init, rather than by passing it here.
+   uint64_t val = len_bytes;
+
+   if (len_bytes >= 8) {
+      int len_words = len_bytes / 8;
+
+      if (len_words >= Tabulation::BLOCK_SIZE) {
+         // To keep 64 bit internal state, we need a prime larger than 2^64.
+         // Hence the value needs to be stored in 128 bits.
+         __uint128_t val127 = val;
+         while (len_words >= Tabulation::BLOCK_SIZE) {
+            // __uint128_t block_hash = Tabulation::Block::scalar_nh32_double(Tabulation::random, Tabulation::random_2, data);
+            // uint64_t block_hash[2];
+            // block_hash[0] = Tabulation::Block::scalar_nh32(Tabulation::random, data);
+            // block_hash[1] = Tabulation::Block::scalar_nh32(Tabulation::random_2, data);
+            // __uint128_t block_hash = Tabulation::Block::carryless(Tabulation::random, data);
+            #if defined(__SSE4_2__) && defined(__x86_64__)
+               __uint128_t block_hash = Tabulation::Block::carryless(Tabulation::random, data);
+            #elif
+               __uint128_t block_hash = Tabulation::Block::scalar_nh64(Tabulation::random, data);
+            #endif
+
+            // Split block_hash into two 64 bit characters that fit under Mersenne-127.
+            uint64_t x[2];
+            memcpy(&x, &block_hash, sizeof(x));
+            // Add both characters to the variable length hash.
+            val127 = Tabulation::combine127(val127, x[0], Tabulation::a127);
+            val127 = Tabulation::combine127(val127, x[1], Tabulation::a127);
+
+            // We eat TAB_PARALLEL_BLOCK_SIZE 8-byte words. The block-hashes don't
+            // automatically increment data.
+            data += 8*Tabulation::BLOCK_SIZE;
+            len_words -= Tabulation::BLOCK_SIZE;
+         }
+         // Now reduce back down to 64 bits.
+         uint64_t x[2];
+         memcpy(&x, &val127, sizeof(x));
+         val = (Tabulation::b + x[0])*(Tabulation::c + x[1]) >> 64;
+      }
+
+      // We want to use something simple here, that doesn't require warming
+      // up AVX. We can use plain NH-hash or Mult-shift.
+      for (size_t i = 0; i < len_words; ++i)
+         val += Tabulation::random_128[i] * ttake64(data) >> 64;
+   }
+
+   int remaining_bytes = len_bytes % 8;
+   if (remaining_bytes) {
+      uint64_t last = 0;
+      if (remaining_bytes & 4) last = ttake32(data);
+      if (remaining_bytes & 2) last = (last << 16) | ttake16(data);
+      if (remaining_bytes & 1) last = (last << 8) | ttake08(data);
+      val += (Tabulation::b * last) >> 64;
+   }
+
+
+   return Tabulation::Finalizer::tabulation_64(val);
+}
+
 
